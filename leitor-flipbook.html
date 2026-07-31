@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Acervo Digital — Leitor de Revista</title>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/turn.js/3/turn.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
+<style>
+  :root{
+    --ink: #10151f;
+    --ink-2: #1b2333;
+    --paper: #f2ead9;
+    --paper-2: #e8dcc2;
+    --brass: #b9924f;
+    --brass-2: #d9b571;
+    --text-dim: #8f97ab;
+    --serif: "Iowan Old Style", "Palatino Linotype", Georgia, "Times New Roman", serif;
+    --sans: "Helvetica Neue", Arial, sans-serif;
+  }
+
+  *{ box-sizing: border-box; }
+
+  html, body{
+    margin:0; padding:0; height:100%;
+    background: radial-gradient(ellipse at 50% 0%, var(--ink-2), var(--ink) 70%);
+    font-family: var(--sans);
+    color: var(--paper);
+    overflow: hidden;
+  }
+
+  /* --- Topbar --- */
+  #topbar{
+    position: fixed; top:0; left:0; right:0; height:64px;
+    display:flex; align-items:center; justify-content:space-between;
+    padding: 0 22px;
+    background: linear-gradient(180deg, rgba(16,21,31,0.95), rgba(16,21,31,0.65) 80%, transparent);
+    z-index: 50;
+  }
+  #brand{
+    font-family: var(--serif); font-size: 19px; letter-spacing: 0.5px;
+    display:flex; align-items:center; gap:10px; color: var(--paper);
+  }
+  #brand .mark{
+    width:10px; height:14px; border: 1.5px solid var(--brass-2);
+    border-radius: 1px 5px 1px 5px; display:inline-block;
+  }
+  #brand small{ display:block; font-family: var(--sans); font-size: 10px; letter-spacing: 2px; color: var(--text-dim); text-transform: uppercase; margin-top:1px;}
+
+  #upload-btn{
+    font-family: var(--sans); font-size: 12.5px; letter-spacing: 0.5px;
+    color: var(--ink); background: var(--brass-2);
+    border: none; padding: 9px 18px; border-radius: 3px; cursor:pointer;
+    font-weight: 600; transition: transform .15s ease, background .2s ease;
+  }
+  #upload-btn:hover{ background: var(--brass); transform: translateY(-1px); }
+  #file-input{ display:none; }
+
+  /* --- Stage --- */
+  #stage{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    padding-top: 40px;
+  }
+
+  #book-shadow{
+    position:relative;
+  }
+
+  #book{
+    box-shadow: 0 40px 80px -20px rgba(0,0,0,0.7), 0 0 0 1px rgba(0,0,0,0.3);
+  }
+
+  .page{
+    background-color: var(--paper);
+    background-image: linear-gradient(90deg, rgba(0,0,0,0.06), transparent 3%, transparent 97%, rgba(0,0,0,0.06));
+    overflow:hidden;
+  }
+  .page canvas{ display:block; width:100%; height:100%; }
+  .page.blank{
+    display:flex; align-items:center; justify-content:center;
+    color:#b7a888; font-family: var(--serif); font-style: italic; font-size: 13px;
+  }
+  .page-num{
+    position:absolute; bottom:8px; width:100%; text-align:center;
+    font-family: var(--serif); font-size: 10.5px; color: #a0906a; letter-spacing: 1px;
+  }
+
+  /* --- Empty state / dropzone --- */
+  #empty-state{
+    text-align:center; max-width: 440px; padding: 20px;
+  }
+  #empty-state .mark-big{
+    width:46px; height:64px; margin: 0 auto 22px; border: 2px solid var(--brass-2);
+    border-radius: 2px 22px 2px 22px; position:relative;
+  }
+  #empty-state .mark-big::after{
+    content:""; position:absolute; left:8px; right:8px; top:14px; height:1px; background: rgba(217,181,113,0.5);
+    box-shadow: 0 8px 0 rgba(217,181,113,0.5), 0 16px 0 rgba(217,181,113,0.5), 0 24px 0 rgba(217,181,113,0.35);
+  }
+  #empty-state h1{
+    font-family: var(--serif); font-weight: 400; font-size: 26px; margin: 0 0 10px; color: var(--paper);
+  }
+  #empty-state p{
+    font-family: var(--sans); font-size: 13.5px; color: var(--text-dim); line-height: 1.6; margin: 0 0 26px;
+  }
+  #dropzone{
+    border: 1.5px dashed rgba(217,181,113,0.4); border-radius: 6px; padding: 26px;
+    font-size: 12.5px; color: var(--text-dim); cursor:pointer; transition: all .2s ease;
+  }
+  #dropzone:hover, #dropzone.drag{
+    border-color: var(--brass-2); background: rgba(217,181,113,0.06); color: var(--paper);
+  }
+
+  /* --- Loading --- */
+  #loading{
+    text-align:center; font-family: var(--serif); font-style: italic; color: var(--text-dim); font-size: 14px;
+  }
+  #loading .bar{
+    width: 200px; height: 2px; background: rgba(217,181,113,0.2); margin: 16px auto 0; border-radius: 2px; overflow:hidden;
+  }
+  #loading .fill{
+    height:100%; width:0%; background: var(--brass-2); transition: width .25s ease;
+  }
+
+  /* --- Controls --- */
+  #controls{
+    position: fixed; bottom: 22px; left:50%; transform: translateX(-50%);
+    display:flex; align-items:center; gap:14px;
+    background: rgba(27,35,51,0.85); backdrop-filter: blur(6px);
+    padding: 10px 16px; border-radius: 30px; border: 1px solid rgba(217,181,113,0.18);
+    z-index: 50; opacity:0; pointer-events:none; transition: opacity .3s ease;
+  }
+  #controls.visible{ opacity:1; pointer-events:auto; }
+  .ctrl-btn{
+    width:34px; height:34px; border-radius:50%; border:none; cursor:pointer;
+    background: rgba(217,181,113,0.12); color: var(--brass-2); font-size:16px;
+    display:flex; align-items:center; justify-content:center; transition: background .2s ease;
+  }
+  .ctrl-btn:hover{ background: rgba(217,181,113,0.25); }
+  .ctrl-btn:disabled{ opacity:0.3; cursor:default; }
+  #page-indicator{
+    font-family: var(--serif); font-size: 13px; color: var(--paper); min-width: 64px; text-align:center; letter-spacing: 0.5px;
+  }
+  #zoom-slider{ width: 90px; accent-color: var(--brass-2); }
+
+  @media (max-width: 640px){
+    #brand small{ display:none; }
+    #upload-btn{ padding: 8px 12px; font-size: 11px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div id="brand">
+    <span class="mark"></span>
+    <div>Acervo Digital<small>Leitor de Publicações</small></div>
+  </div>
+  <div>
+    <input type="file" id="file-input" accept="application/pdf">
+    <button id="upload-btn">Abrir PDF</button>
+  </div>
+</div>
+
+<div id="stage">
+
+  <div id="empty-state">
+    <div class="mark-big"></div>
+    <h1>Sua próxima leitura, em formato de revista</h1>
+    <p>Envie um PDF e folheie as páginas como num impresso — com sombra, curvatura e som de virada. Tudo acontece no seu navegador; nada é enviado a nenhum servidor.</p>
+    <div id="dropzone">Arraste um arquivo .pdf aqui, ou clique para escolher</div>
+  </div>
+
+  <div id="loading" style="display:none;">
+    Preparando as páginas…
+    <div class="bar"><div class="fill" id="loading-fill"></div></div>
+  </div>
+
+  <div id="book-shadow" style="display:none;">
+    <div id="book"></div>
+  </div>
+
+</div>
+
+<div id="controls">
+  <button class="ctrl-btn" id="btn-prev">‹</button>
+  <span id="page-indicator">– / –</span>
+  <button class="ctrl-btn" id="btn-next">›</button>
+  <input type="range" id="zoom-slider" min="60" max="140" value="100">
+</div>
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+// turn.js was built for jQuery <1.9 and reads $.browser, which no longer
+// exists in modern jQuery. This shim restores just enough of it.
+if (!$.browser) {
+  var ua = navigator.userAgent.toLowerCase();
+  $.browser = {
+    webkit: /webkit/.test(ua),
+    mozilla: /firefox/.test(ua),
+    msie: /msie|trident/.test(ua),
+    version: (ua.match(/(?:chrome|firefox|safari|version)\/([\d.]+)/) || [,"0"])[1]
+  };
+}
+
+const fileInput = document.getElementById('file-input');
+const uploadBtn = document.getElementById('upload-btn');
+const dropzone = document.getElementById('dropzone');
+const emptyState = document.getElementById('empty-state');
+const loading = document.getElementById('loading');
+const loadingFill = document.getElementById('loading-fill');
+const bookShadow = document.getElementById('book-shadow');
+const controls = document.getElementById('controls');
+const pageIndicator = document.getElementById('page-indicator');
+const btnPrev = document.getElementById('btn-prev');
+const btnNext = document.getElementById('btn-next');
+const zoomSlider = document.getElementById('zoom-slider');
+
+let totalPages = 0;
+let baseWidth = 0, baseHeight = 0;
+
+uploadBtn.addEventListener('click', () => fileInput.click());
+dropzone.addEventListener('click', () => fileInput.click());
+['dragover','dragleave','drop'].forEach(evt => {
+  dropzone.addEventListener(evt, e => {
+    e.preventDefault();
+    dropzone.classList.toggle('drag', evt === 'dragover');
+  });
+});
+dropzone.addEventListener('drop', e => {
+  const f = e.dataTransfer.files[0];
+  if (f) handleFile(f);
+});
+fileInput.addEventListener('change', e => {
+  if (e.target.files[0]) handleFile(e.target.files[0]);
+});
+
+async function handleFile(file){
+  if (file.type !== 'application/pdf'){
+    alert('Por favor, selecione um arquivo PDF.');
+    return;
+  }
+  emptyState.style.display = 'none';
+  bookShadow.style.display = 'none';
+  loading.style.display = 'block';
+  loadingFill.style.width = '0%';
+  controls.classList.remove('visible');
+
+  if ($('#book').data('isTurn')) {
+    $('#book').turn('destroy').remove();
+    $('#book-shadow').append('<div id="book"></div>');
+  }
+
+  const buffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+  totalPages = pdf.numPages;
+
+  const firstPage = await pdf.getPage(1);
+  const nativeViewport = firstPage.getViewport({ scale: 1 });
+  const aspect = nativeViewport.width / nativeViewport.height;
+
+  const maxH = Math.min(window.innerHeight - 140, 780);
+  baseHeight = maxH;
+  baseWidth = Math.round(baseHeight * aspect);
+
+  const $book = $('#book');
+  $book.css({ width: baseWidth * 2, height: baseHeight });
+
+  for (let i = 1; i <= totalPages; i++){
+    const page = await pdf.getPage(i);
+    const viewport = page.getViewport({ scale: 1 });
+    const renderScale = (baseWidth * 2) / viewport.width; // extra res for crispness
+    const scaledViewport = page.getViewport({ scale: renderScale });
+
+    const canvas = document.createElement('canvas');
+    canvas.width = scaledViewport.width;
+    canvas.height = scaledViewport.height;
+    const ctx = canvas.getContext('2d');
+    await page.render({ canvasContext: ctx, viewport: scaledViewport }).promise;
+
+    const pageDiv = document.createElement('div');
+    pageDiv.className = 'page';
+    pageDiv.appendChild(canvas);
+    const num = document.createElement('div');
+    num.className = 'page-num';
+    num.textContent = i;
+    pageDiv.style.position = 'relative';
+    pageDiv.appendChild(num);
+    $book.append(pageDiv);
+
+    loadingFill.style.width = Math.round((i / totalPages) * 100) + '%';
+  }
+
+  loading.style.display = 'none';
+  bookShadow.style.display = 'block';
+  controls.classList.add('visible');
+
+  $book.turn({
+    width: baseWidth * 2,
+    height: baseHeight,
+    autoCenter: true,
+    elevation: 50,
+    gradients: true,
+    duration: 700,
+    when: {
+      turned: (event, page) => updateIndicator(page)
+    }
+  });
+  $book.data('isTurn', true);
+
+  updateIndicator(1);
+}
+
+function updateIndicator(page){
+  pageIndicator.textContent = page + ' / ' + totalPages;
+  btnPrev.disabled = page <= 1;
+  btnNext.disabled = page >= totalPages;
+}
+
+btnPrev.addEventListener('click', () => $('#book').turn('previous'));
+btnNext.addEventListener('click', () => $('#book').turn('next'));
+
+document.addEventListener('keydown', e => {
+  if (!$('#book').data('isTurn')) return;
+  if (e.key === 'ArrowLeft') $('#book').turn('previous');
+  if (e.key === 'ArrowRight') $('#book').turn('next');
+});
+
+zoomSlider.addEventListener('input', () => {
+  const scale = zoomSlider.value / 100;
+  $('#book').css('transform', `scale(${scale})`);
+});
+</script>
+
+</body>
+</html>
